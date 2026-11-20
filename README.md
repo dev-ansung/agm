@@ -1,237 +1,105 @@
-# agm
+# Antigravity Manager (AGM)
 
-Multi-account CLI for [Antigravity](https://antigravity.google/) products:
+A single-binary CLI for managing Google accounts, live model quotas, and session switching across **Antigravity CLI (`agy`)**, **Antigravity IDE**, and **Antigravity Desktop**.
 
-- **Antigravity CLI** (`agy`)
-- **Antigravity IDE**
-- **Antigravity** desktop
+## Usage
 
-Manage Google accounts, quotas, and session switching from a single static binary. Own encrypted local store — no other apps required for login or account management.
-
-**Module:** [`github.com/shyim/agm`](https://github.com/shyim/agm)
-
----
-
-## Install
+### Install
 
 ```bash
 go install github.com/shyim/agm@latest
 ```
 
-Or from a clone of this repository:
+Or build from source:
 
 ```bash
 go build -o agm .
-# optional: install to PATH
 cp agm ~/.local/bin/agm
 ```
 
-Requires **Go 1.22+** to build. Runs on **macOS**, **Linux**, and **Windows**.
+### Quick Start
 
 ```bash
-agm help
-```
-
-### Environment
-
-| Variable | Purpose |
-|----------|---------|
-| `AGM_DATA_DIR` | Data directory (default `~/.antigravity-agent`) |
-| `AGM_DB_PATH` | Full path to `cloud_accounts.db` |
-| `ANTIGRAVITY_AGENT_DIR` | Alias for `AGM_DATA_DIR` |
-
----
-
-## Quick start
-
-```bash
-agm init                          # create local store (also automatic)
-agm login                         # add a Google account via browser OAuth
-agm list
-agm switch you@gmail.com --target agy
-```
-
----
-
-## Adding accounts
-
-### Browser OAuth (recommended)
-
-```bash
+# Add accounts via browser OAuth (or import an active session)
 agm login
-# alias: agm add
+agm import-ide
+
+# Inspect live quotas and reset countdowns
+agm list
+agm info user@example.com
+
+# Switch only the agy CLI (leaving IDE untouched), or switch all targets
+agm switch user@example.com --target agy
+agm auto-switch --min 60 --yes --json
 ```
 
-1. Listens on `http://localhost:8888` (falls back through `8892` if busy)
-2. Opens the browser for Google consent (offline access + refresh token)
-3. Stores encrypted tokens and a quota snapshot locally
+### Command Reference
 
-Run once per Google account.
+| Command | Flags / Args | Description |
+|---|---|---|
+| `init` | — | Initialize `~/.antigravity-agent/`, master key (`.mk`), and SQLite store |
+| `login` (`add`) | — | Authenticate a Google account via localhost OAuth (`8888`–`8892`) |
+| `import-cli` (`import-agy`) | — | Import the active `agy` account from the OS credential store |
+| `import-ide` | — | Import the active Antigravity IDE account from `state.vscdb` |
+| `list` (`ls`) | `--json` | List accounts, active targets (`cli`, `ide`), group quotas, and next reset |
+| `info` | `<email\|alias>`, `--json` | Show sorted per-model quota percentages and local reset times |
+| `status` | `--json` | Show active account summary and next reset countdown |
+| `switch` | `<email\|alias>`, `-t agy\|ide\|all` | Apply account credentials to the selected target(s) |
+| `auto-switch` | `--min`, `--model`, `-y`, `--json` | Select and switch to the highest-quota account above `--min` |
+| `refresh` / `refresh-all` | `<email\|alias>` | Refresh OAuth access tokens and live per-model quota snapshots |
+| `validate` | — | Refresh expired access tokens across stored accounts |
+| `sync` | — | Compare local DB against IDE `state.vscdb` and `agy` credential store |
+| `doctor` | — | Verify data paths, executables, credential stores, and `QUOTA_URL` |
+| `alias` / `unalias` | `[name] [email]` | Manage short aliases for account emails |
+| `export` / `import-backup` | `[file]` | Export or restore encrypted account backups |
+| `remove` (`rm`) | `<email\|alias>` | Delete an account from the local store |
+| `watch` | `-n <seconds>` | Poll and render `agm list` on an interval |
 
-### Import an existing Antigravity session
+#### Environment Variables
 
-| Command | Source |
-|---------|--------|
-| `agm import-cli` | OS credential store used by **agy** |
-| `agm import-ide` | Antigravity IDE `state.vscdb` |
+| Variable | Default | Purpose |
+|---|---|---|
+| `AGM_DATA_DIR` | `~/.antigravity-agent` | Root directory for `.mk` and `cloud_accounts.db` |
+| `AGM_DB_PATH` | `$AGM_DATA_DIR/cloud_accounts.db` | Override SQLite database path |
+| `AGM_QUOTA_URL` | `https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels` | Override quota endpoint |
+| `ANTIGRAVITY_AGENT_DIR` | — | Alias for `AGM_DATA_DIR` |
 
-Imports the **currently active** session only. For additional accounts, use `agm login` or switch the product session and import again.
+## How it works?
 
-### Backup / restore
+1. **Authentication & Storage**: `agm login` runs a local loopback OAuth2 flow (`http://localhost:8888`–`8892`) using the public Antigravity OAuth client, encrypts the resulting tokens with AES-256-GCM, and persists them in `~/.antigravity-agent/cloud_accounts.db`.
+2. **Quota Polling**: `FetchLiveQuota` resolves `cloudaicompanionProject` via `v1internal:loadCodeAssist` and queries `v1internal:fetchAvailableModels` on `daily-cloudcode-pa.sandbox.googleapis.com` to retrieve per-model `remainingFraction` and `resetTime` values.
+3. **Target Switching**:
+   - `--target agy` updates the OS credential store (`service=gemini`, `username=antigravity`) directly with no GUI restart.
+   - `--target ide` injects the protobuf-encoded OAuth payload into Antigravity IDE's `state.vscdb` and restarts the IDE process if running.
+   - `--target all` applies both.
 
-```bash
-agm export accounts_backup.json
-agm import-backup accounts_backup.json
-```
+## Compatibility
 
-Exports keep fields **encrypted**. Restoring on another machine needs the same master key (`.mk`). Prefer `agm login` on a fresh machine.
-
----
-
-## Switching accounts
-
-```bash
-agm switch <email|alias|partial> [--target agy|ide|all]
-```
-
-| Target | Product | Behavior |
-|--------|---------|----------|
-| `agy` (`cli`) | Antigravity CLI | Write OS credential store only (no GUI process restart) |
-| `ide` | Antigravity IDE | Inject OAuth into `state.vscdb`, restart IDE if found |
-| `all` (default) | All surfaces | Applies `agy` → `ide` |
-
-```bash
-agm switch work --target agy
-agm switch you@gmail.com -t ide
-agm switch personal --target=all
-```
-
-Expired access tokens are refreshed automatically when a refresh token is available.
-
-### Aliases
-
-```bash
-agm alias work you@gmail.com
-agm switch work --target agy
-agm alias          # list
-agm unalias work
-```
-
----
-
-## Everyday usage
-
-```bash
-agm list                       # accounts + quota summary (tags: cli / ide)
-agm info you@gmail.com         # per-model quotas
-agm status                     # active account snapshot
-agm refresh you@gmail.com
-agm refresh-all
-agm validate                   # refresh expired tokens only
-agm sync                       # local DB vs IDE vs CLI credentials
-agm doctor                     # diagnostics
-agm watch --interval 15        # live list
-agm remove you@gmail.com
-agm auto-switch --min 40 --model claude
-```
-
----
-
-## Data directory
-
-Default: **`~/.antigravity-agent/`**
-
-```plaintext
-~/.antigravity-agent/
-├── cloud_accounts.db    # SQLite (encrypted token/quota fields + settings)
-├── .mk                  # AES-256 master key as hex (mode 0600)
-└── aliases.json         # optional shortcuts
-```
-
-Created automatically on first use.
-
----
-
-## How switching works
-
-```plaintext
-  agm login / import-*
-           │
-           ▼
-   ~/.antigravity-agent/
-     cloud_accounts.db
-           │
-           │  agm switch --target …
-     ┌─────┴─────┐
-     ▼           ▼
-    agy         IDE
-  keychain     vscdb
-```
-
-- **Credential store** — macOS Keychain (`gemini` / `antigravity`), Linux `secret-tool`, Windows Credential Manager
-- **SQLite** — unified OAuth entry in Antigravity `state.vscdb` (`antigravityUnifiedStateSync.oauthToken`)
-
----
-
-## Platform notes
-
-| OS | Credential store |
-|----|------------------|
-| macOS | Keychain via `security` |
-| Linux | `secret-tool` (libsecret) |
-| Windows | Credential Manager (`gemini:antigravity`) |
-
-Restarting IDE/desktop after `switch` is best-effort. Token injection still applies if the executable is not found.
-
----
+| Platform | CLI Credential Store (`agy`) | IDE Storage (`state.vscdb`) |
+|---|---|---|
+| macOS | Keychain (`security`) | `~/Library/Application Support/Antigravity IDE/User/globalStorage/state.vscdb` |
+| Linux | Secret Service (`secret-tool`) | `~/.config/Antigravity IDE/User/globalStorage/state.vscdb` |
+| Windows | Credential Manager (`gemini:antigravity`) | `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb` |
 
 ## Security
 
-- Tokens encrypted at rest with **AES-256-GCM** (`agm_enc_v1:…`)
-- Master key in `.mk` — keep `~/.antigravity-agent` private (`0700` / `0600`)
-- Do not commit `.mk`, databases, or export files
-- Uses the public Antigravity OAuth client (same as the official apps)
-
----
-
-## Command reference
-
-| Command | Description |
-|---------|-------------|
-| `init` | Create data dir, key, and empty DB |
-| `login` / `add` | Browser OAuth |
-| `import-cli` / `import-agy` | Import from agy credential store |
-| `import-ide` | Import from IDE database |
-| `list` / `ls` | List accounts |
-| `info` / `status` | Details / snapshot |
-| `switch` | Apply account to product surface(s) |
-| `refresh` / `refresh-all` / `validate` | Tokens & quotas |
-| `sync` / `doctor` | Status & diagnostics |
-| `remove` / `rm` | Delete local account |
-| `alias` / `unalias` | Shortcuts |
-| `export` / `import-backup` | Backup |
-| `auto-switch` | Best quota account |
-| `watch` | Live monitoring |
-| `help` | Help |
-
----
+- OAuth access and refresh tokens are encrypted at rest with **AES-256-GCM** (`agm_enc_v1:...`) using a locally generated master key (`.mk`).
+- Store directory and key files are created with restrictive permissions (`0700` / `0600`).
+- `agm export` preserves encrypted token fields; restoring on another host requires the matching `.mk` file.
+- Never commit `.mk`, `cloud_accounts.db`, or exported backup JSON files.
 
 ## Troubleshooting
 
-| Issue | Fix |
-|-------|-----|
-| Missing database / master key | `agm init` or `agm login` |
-| OAuth never completes | Free ports `8888`–`8892`; allow localhost |
-| `import-cli` fails | Sign into `agy` once, or use `agm login` |
-| IDE switch finds no DB | Open Antigravity IDE once |
-| Empty quotas | `agm refresh <email>` |
-| Expired tokens | `agm validate` |
+| Symptom | Resolution |
+|---|---|
+| Missing DB or master key | Run `agm init` or `agm login` |
+| OAuth callback hangs | Ensure ports `8888`–`8892` are free on `127.0.0.1` |
+| `import-cli` finds no credentials | Sign into `agy` once or use `agm login` |
+| `ide_db: not found` | Launch Antigravity IDE once to initialize `state.vscdb` |
+| Stale or empty quotas | Run `agm refresh <email>` or `agm refresh-all` |
+| Expired access token | Run `agm validate` |
 
-```bash
-agm doctor
-```
-
----
+Run `agm doctor` for full environment diagnostics.
 
 ## Development
 
@@ -244,22 +112,20 @@ go build -o agm .
 ```plaintext
 .
 ├── main.go
-├── go.mod                 # module github.com/shyim/agm
-├── internal/
-│   ├── api/               # OAuth, refresh, quota
-│   ├── credstore/         # OS credential store
-│   ├── crypto/            # master key + AES-GCM
-│   ├── db/                # SQLite + IDE inject
-│   ├── paths/
-│   ├── process/
-│   ├── proto/
-│   ├── target/            # agy | ide | all
-│   └── aliases/
-└── README.md
+├── go.mod
+├── cmd/               # Cobra CLI commands and JSON/table formatters
+└── internal/
+    ├── aliases/       # Account alias persistence
+    ├── api/           # OAuth2, token refresh, loadCodeAssist, quota API
+    ├── credstore/     # OS credential store adapters
+    ├── crypto/        # Master key and AES-256-GCM encryption
+    ├── db/            # SQLite store and IDE state.vscdb injection
+    ├── paths/         # Platform-specific product and data paths
+    ├── process/       # IDE/CLI process discovery and restart
+    ├── proto/         # Protobuf wire helpers for state.vscdb
+    └── target/        # Target parsing (agy | ide | all)
 ```
-
----
 
 ## License
 
-See [LICENSE](./LICENSE) in this repository.
+No `LICENSE` file is currently included in this repository.
