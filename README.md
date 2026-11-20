@@ -28,9 +28,9 @@ agm import-ide
 agm list
 agm info user@example.com
 
-# Switch only the agy CLI (leaving IDE untouched), or switch all targets
+# Switch only the agy CLI (leaving IDE untouched), or auto-select by quota
 agm switch user@example.com --target agy
-agm auto-switch --min 60 --yes --json
+agm auto-switch --refresh --target agy --min 60 --yes --json
 ```
 
 ### Command Reference
@@ -45,7 +45,7 @@ agm auto-switch --min 60 --yes --json
 | `info` | `<email\|alias>`, `--json` | Show sorted per-model quota percentages and local reset times |
 | `status` | `--json` | Show active account summary and next reset countdown |
 | `switch` | `<email\|alias>`, `-t agy\|ide\|all` | Apply account credentials to the selected target(s) |
-| `auto-switch` | `--min`, `--model`, `-y`, `--json` | Select and switch to the highest-quota account above `--min` |
+| `auto-switch` | `--min`, `--model`, `-t`, `--refresh`, `-y`, `--json` | Score accounts by `min(quota)` across matching models and switch `--target` to the highest `>= --min` |
 | `refresh` / `refresh-all` | `<email\|alias>` | Refresh OAuth access tokens and live per-model quota snapshots |
 | `validate` | — | Refresh expired access tokens across stored accounts |
 | `sync` | — | Compare local DB against IDE `state.vscdb` and `agy` credential store |

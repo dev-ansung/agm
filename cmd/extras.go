@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,11 +18,13 @@ import (
 )
 
 var (
-	autoSwitchMin   int
-	autoSwitchModel string
-	autoSwitchJSON  bool
-	autoSwitchYes   bool
-	watchInterval   int
+	autoSwitchMin     int
+	autoSwitchModel   string
+	autoSwitchTarget  string
+	autoSwitchRefresh bool
+	autoSwitchJSON    bool
+	autoSwitchYes     bool
+	watchInterval     int
 )
 
 func init() {
@@ -33,10 +36,15 @@ func init() {
 	autoSwitchCmd.Flags().IntVar(&autoSwitchMin, "min", 50, "Minimum quota score percentage")
 	autoSwitchCmd.Flags().IntVar(&autoSwitchMin, "min-quota", 50, "Minimum quota score percentage")
 	autoSwitchCmd.Flags().StringVar(&autoSwitchModel, "model", "", "Filter by model name (gemini|claude)")
+	autoSwitchCmd.Flags().StringVarP(&autoSwitchTarget, "target", "t", "all", "Apply account to target product(s) (agy|ide|all)")
+	autoSwitchCmd.Flags().BoolVar(&autoSwitchRefresh, "refresh", false, "Refresh live quotas before selecting an account")
 	autoSwitchCmd.Flags().BoolVar(&autoSwitchJSON, "json", false, "Output JSON (implies non-interactive when combined with --yes)")
 	autoSwitchCmd.Flags().BoolVarP(&autoSwitchYes, "yes", "y", false, "Confirm switch without prompting")
 	_ = autoSwitchCmd.RegisterFlagCompletionFunc("model", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"gemini", "claude"}, cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = autoSwitchCmd.RegisterFlagCompletionFunc("target", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"all", "ide", "agy"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	RootCmd.AddCommand(autoSwitchCmd)
 
@@ -152,13 +160,30 @@ var importBackupCmd = &cobra.Command{
 var autoSwitchCmd = &cobra.Command{
 	Use:   "auto-switch",
 	Short: "Switch to the best account based on available quota",
+	Long:  "Scores each stored account by its lowest remaining quota across matching models (--model), then switches --target to the highest-scoring account >= --min.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		tgt, err := target.Parse(autoSwitchTarget)
+		if err != nil {
+			return err
+		}
 		accounts, err := db.ListAccounts()
 		if err != nil {
 			return err
 		}
+		if autoSwitchRefresh && len(accounts) > 0 {
+			for i := range accounts {
+				if err := api.RefreshAccountQuota(&accounts[i]); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: refresh %s: %v\n", accounts[i].Email, err)
+				}
+			}
+			accounts, err = db.ListAccounts()
+			if err != nil {
+				return err
+			}
+		}
 		var best *db.Account
 		bestScore := -1
+		filter := strings.ToLower(autoSwitchModel)
 		for i := range accounts {
 			a := &accounts[i]
 			if a.Quota == nil || len(a.Quota.Models) == 0 {
@@ -166,7 +191,7 @@ var autoSwitchCmd = &cobra.Command{
 			}
 			var vals []int
 			for name, m := range a.Quota.Models {
-				if autoSwitchModel != "" && !strings.Contains(strings.ToLower(name), autoSwitchModel) {
+				if filter != "" && !strings.Contains(strings.ToLower(name), filter) {
 					continue
 				}
 				vals = append(vals, m.Percentage)
@@ -192,11 +217,12 @@ var autoSwitchCmd = &cobra.Command{
 			return printJSON(map[string]any{
 				"best_account": best.Email,
 				"score":        bestScore,
+				"target":       target.Label(tgt),
 				"switched":     false,
 			})
 		}
 		if !autoSwitchYes {
-			fmt.Printf("Best account: %s (score %d%%)\n", best.Email, bestScore)
+			fmt.Printf("Best account: %s (score %d%%, target %s)\n", best.Email, bestScore, target.Label(tgt))
 			fmt.Print("Switch to this account? [y/N]: ")
 			var ans string
 			_, _ = fmt.Scanln(&ans)
@@ -206,25 +232,28 @@ var autoSwitchCmd = &cobra.Command{
 			}
 		}
 		if autoSwitchJSON {
-			if err := switchAllToAccount(best); err != nil {
+			if err := switchAccountToTarget(best, tgt, true); err != nil {
 				return err
 			}
 			return printJSON(map[string]any{
 				"best_account": best.Email,
 				"score":        bestScore,
+				"target":       target.Label(tgt),
 				"switched":     true,
 			})
 		}
-		return switchAllToAccount(best)
+		return switchAccountToTarget(best, tgt, false)
 	},
 }
 
-func switchAllToAccount(acc *db.Account) error {
+func switchAccountToTarget(acc *db.Account, tgt target.Target, quiet bool) error {
 	if acc.Token == nil {
 		return fmt.Errorf("could not decrypt token for %s (run agm doctor)", acc.Email)
 	}
 	if db.IsTokenExpired(acc.Token) {
-		fmt.Println("Token expired; refreshing…")
+		if !quiet {
+			fmt.Println("Token expired; refreshing…")
+		}
 		if _, _, err := api.ValidateAccount(acc); err != nil {
 			return fmt.Errorf("refresh before switch: %w", err)
 		}
@@ -235,21 +264,28 @@ func switchAllToAccount(acc *db.Account) error {
 		}
 	}
 
-	fmt.Printf("Switching %s → all\n", acc.Email)
+	if !quiet {
+		fmt.Printf("Switching %s → %s\n", acc.Email, target.Label(tgt))
+	}
 	var errs []string
-	for _, t := range target.Expand(target.All) {
+	expanded := target.Expand(tgt)
+	for _, t := range expanded {
 		if err := switchOne(acc, t); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", target.Label(t), err))
-			fmt.Printf("  ✗ %s: %v\n", target.Label(t), err)
+			if !quiet {
+				fmt.Printf("  ✗ %s: %v\n", target.Label(t), err)
+			}
 			continue
 		}
-		fmt.Printf("  ✓ %s\n", target.Label(t))
+		if !quiet {
+			fmt.Printf("  ✓ %s\n", target.Label(t))
+		}
 		if acc.ID != "" {
 			_ = db.SetActiveForTarget(string(t), acc.ID)
 		}
 	}
 	_ = db.SetActive(acc.Email)
-	if len(errs) > 0 && len(errs) == len(target.Expand(target.All)) {
+	if len(errs) > 0 && len(errs) == len(expanded) {
 		return fmt.Errorf("switch failed: %s", strings.Join(errs, "; "))
 	}
 	if len(errs) > 0 {
