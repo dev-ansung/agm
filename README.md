@@ -98,6 +98,13 @@ agm auto-switch --min 60 --yes --json
 | `ide_db: not found` | Launch Antigravity IDE once to initialize `state.vscdb` |
 | Stale or empty quotas | Run `agm refresh <email>` or `agm refresh-all` |
 | Expired access token | Run `agm validate` |
+| Quotas stuck at `100%` (`now + 5h`) | Verify `QUOTA_URL` in `agm doctor` uses `daily-cloudcode-pa.sandbox.googleapis.com` (or override via `AGM_QUOTA_URL`) |
+
+### Understanding Quotas
+
+- **5-hour vs. weekly limits**: `fetchAvailableModels` returns a single `quotaInfo` (`remainingFraction` and `resetTime`), which reflects the active 5-hour window. To inspect weekly limits as well, run `agy -p "/usage"`.
+- **Shared model pools**: Models within the same pool (for example, Gemini models vs. Claude / `gpt-oss-120b-medium`) share the same remaining percentage and reset timestamp.
+- **Minor percentage differences**: `agm` rounds `remainingFraction * 100` to the nearest integer, so values may differ by ~1% from `agy -p "/usage"`.
 
 Run `agm doctor` for full environment diagnostics.
 
