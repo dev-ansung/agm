@@ -1,4 +1,4 @@
-module github.com/shyim/agm
+module github.com/dev-ansung/agm
 
 go 1.26.5
 

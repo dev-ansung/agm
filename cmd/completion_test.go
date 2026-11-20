@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/shyim/agm/internal/aliases"
-	"github.com/shyim/agm/internal/db"
+	"github.com/dev-ansung/agm/internal/aliases"
+	"github.com/dev-ansung/agm/internal/db"
 )
 
 func TestCompleteAccountsAndAliases(t *testing.T) {

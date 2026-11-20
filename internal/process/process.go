@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shyim/agm/internal/paths"
-	"github.com/shyim/agm/internal/target"
+	"github.com/dev-ansung/agm/internal/paths"
+	"github.com/dev-ansung/agm/internal/target"
 )
 
 // SwitchOptions controls process lifecycle around injection.

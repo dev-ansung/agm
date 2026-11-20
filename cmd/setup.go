@@ -3,12 +3,12 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/dev-ansung/agm/internal/api"
+	"github.com/dev-ansung/agm/internal/credstore"
+	"github.com/dev-ansung/agm/internal/db"
+	"github.com/dev-ansung/agm/internal/paths"
+	"github.com/dev-ansung/agm/internal/target"
 	"github.com/spf13/cobra"
-	"github.com/shyim/agm/internal/api"
-	"github.com/shyim/agm/internal/credstore"
-	"github.com/shyim/agm/internal/db"
-	"github.com/shyim/agm/internal/paths"
-	"github.com/shyim/agm/internal/target"
 )
 
 func init() {

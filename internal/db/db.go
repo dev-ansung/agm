@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shyim/agm/internal/crypto"
-	"github.com/shyim/agm/internal/paths"
-	"github.com/shyim/agm/internal/proto"
+	"github.com/dev-ansung/agm/internal/crypto"
+	"github.com/dev-ansung/agm/internal/paths"
+	"github.com/dev-ansung/agm/internal/proto"
 	_ "modernc.org/sqlite"
 )
 

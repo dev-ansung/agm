@@ -7,7 +7,7 @@ A single-binary CLI for managing Google accounts, live model quotas, and session
 ### Install
 
 ```bash
-go install github.com/shyim/agm@latest
+go install github.com/dev-ansung/agm@latest
 ```
 
 Or build from source:

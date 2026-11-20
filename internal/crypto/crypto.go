@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/shyim/agm/internal/paths"
+	"github.com/dev-ansung/agm/internal/paths"
 )
 
 const versionPrefix = "agm_enc_v1:"

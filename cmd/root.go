@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dev-ansung/agm/internal/aliases"
+	"github.com/dev-ansung/agm/internal/db"
 	"github.com/spf13/cobra"
-	"github.com/shyim/agm/internal/aliases"
-	"github.com/shyim/agm/internal/db"
 )
 
 var RootCmd = &cobra.Command{

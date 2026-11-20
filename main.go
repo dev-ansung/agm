@@ -2,7 +2,7 @@
 package main
 
 import (
-	"github.com/shyim/agm/cmd"
+	"github.com/dev-ansung/agm/cmd"
 )
 
 func main() {

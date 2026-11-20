@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/shyim/agm/internal/paths"
+	"github.com/dev-ansung/agm/internal/paths"
 )
 
 func path() string {

@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shyim/agm/internal/aliases"
-	"github.com/shyim/agm/internal/api"
-	"github.com/shyim/agm/internal/credstore"
-	"github.com/shyim/agm/internal/db"
-	"github.com/shyim/agm/internal/paths"
-	"github.com/shyim/agm/internal/process"
-	"github.com/shyim/agm/internal/target"
+	"github.com/dev-ansung/agm/internal/aliases"
+	"github.com/dev-ansung/agm/internal/api"
+	"github.com/dev-ansung/agm/internal/credstore"
+	"github.com/dev-ansung/agm/internal/db"
+	"github.com/dev-ansung/agm/internal/paths"
+	"github.com/dev-ansung/agm/internal/process"
+	"github.com/dev-ansung/agm/internal/target"
 	"github.com/spf13/cobra"
 )
 
