@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -358,17 +360,31 @@ func RefreshAccessToken(refreshToken string) (*TokenResponse, error) {
 	return &tr, nil
 }
 
+// QuotaEndpoint returns the active quota API endpoint, respecting AGM_QUOTA_URL.
+func QuotaEndpoint() string {
+	if override := strings.TrimSpace(os.Getenv("AGM_QUOTA_URL")); override != "" {
+		return override
+	}
+	return urlQuota
+}
+
 // FetchLiveQuota loads model quotas for an access token.
 func FetchLiveQuota(accessToken string) (*db.Quota, error) {
-	projectID, _ := fetchProjectID(accessToken)
+	return fetchLiveQuotaWithEndpoints(accessToken, urlProject, QuotaEndpoint())
+}
 
-	payload := map[string]any{}
-	if projectID != "" {
-		payload["project"] = projectID
+func fetchLiveQuotaWithEndpoints(accessToken, projectEndpoint, quotaEndpoint string) (*db.Quota, error) {
+	projectID, err := fetchProjectIDFromURL(accessToken, projectEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("fetch project id: %w", err)
 	}
-	raw, _ := json.Marshal(payload)
+	if projectID == "" {
+		return nil, fmt.Errorf("empty cloudaicompanionProject from loadCodeAssist")
+	}
 
-	req, err := http.NewRequest(http.MethodPost, urlQuota, strings.NewReader(string(raw)))
+	raw, _ := json.Marshal(map[string]any{"project": projectID})
+
+	req, err := http.NewRequest(http.MethodPost, quotaEndpoint, strings.NewReader(string(raw)))
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +420,7 @@ func FetchLiveQuota(accessToken string) (*db.Quota, error) {
 			continue
 		}
 		q.Models[name] = db.ModelQuota{
-			Percentage: int(info.QuotaInfo.RemainingFraction * 100),
+			Percentage: int(math.Round(info.QuotaInfo.RemainingFraction * 100)),
 			ResetTime:  info.QuotaInfo.ResetTime,
 		}
 	}
@@ -412,8 +428,12 @@ func FetchLiveQuota(accessToken string) (*db.Quota, error) {
 }
 
 func fetchProjectID(accessToken string) (string, error) {
+	return fetchProjectIDFromURL(accessToken, urlProject)
+}
+
+func fetchProjectIDFromURL(accessToken, projectEndpoint string) (string, error) {
 	payload := []byte(`{"metadata":{"ideType":"ANTIGRAVITY"}}`)
-	req, err := http.NewRequest(http.MethodPost, urlProject, strings.NewReader(string(payload)))
+	req, err := http.NewRequest(http.MethodPost, projectEndpoint, strings.NewReader(string(payload)))
 	if err != nil {
 		return "", err
 	}

@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/shyim/agm/internal/aliases"
 	"github.com/shyim/agm/internal/api"
 	"github.com/shyim/agm/internal/credstore"
@@ -13,11 +14,21 @@ import (
 	"github.com/shyim/agm/internal/paths"
 	"github.com/shyim/agm/internal/process"
 	"github.com/shyim/agm/internal/target"
+	"github.com/spf13/cobra"
 )
 
-var switchTarget string
+var (
+	switchTarget string
+	listJSON     bool
+	infoJSON     bool
+	statusJSON   bool
+)
 
 func init() {
+	listCmd.Flags().BoolVar(&listJSON, "json", false, "Output JSON")
+	infoCmd.Flags().BoolVar(&infoJSON, "json", false, "Output JSON")
+	statusCmd.Flags().BoolVar(&statusJSON, "json", false, "Output JSON")
+
 	RootCmd.AddCommand(listCmd)
 	RootCmd.AddCommand(infoCmd)
 	RootCmd.AddCommand(statusCmd)
@@ -40,6 +51,34 @@ func runList() error {
 	if err != nil {
 		return err
 	}
+	activeAgy := db.GetActiveForTarget(string(target.Agy))
+	activeIDE := db.GetActiveForTarget(string(target.IDE))
+	now := time.Now()
+
+	if listJSON {
+		type jsonRow struct {
+			Email     string   `json:"email"`
+			Status    []string `json:"status"`
+			GemPro    string   `json:"gem_pro"`
+			GemFlash  string   `json:"gem_flash"`
+			Claude    string   `json:"claude"`
+			NextReset string   `json:"next_reset"`
+		}
+		out := make([]jsonRow, 0, len(accounts))
+		for _, a := range accounts {
+			gp, gf, cl := quotaGroups(a.Quota)
+			out = append(out, jsonRow{
+				Email:     a.Email,
+				Status:    accountStatusTags(a, activeAgy, activeIDE),
+				GemPro:    gp,
+				GemFlash:  gf,
+				Claude:    cl,
+				NextReset: nextResetSummary(a.Quota, now),
+			})
+		}
+		return printJSON(out)
+	}
+
 	if len(accounts) == 0 {
 		fmt.Println("No accounts yet.")
 		fmt.Println("  agm login        — browser OAuth")
@@ -47,29 +86,89 @@ func runList() error {
 		return nil
 	}
 
-	fmt.Printf("%-36s %-14s %10s %10s %10s\n", "EMAIL", "STATUS", "GEM-PRO", "GEM-FLASH", "CLAUDE")
-	fmt.Println(strings.Repeat("-", 84))
-	activeAgy := db.GetActiveForTarget(string(target.Agy))
-	activeIDE := db.GetActiveForTarget(string(target.IDE))
+	fmt.Printf("%-36s %-14s %9s %9s %9s  %s\n", "EMAIL", "STATUS", "GEM-PRO", "GEM-FLASH", "CLAUDE", "NEXT-RESET")
+	fmt.Println(strings.Repeat("-", 96))
 	for _, a := range accounts {
-		var tags []string
-		if a.ID != "" && a.ID == activeAgy {
-			tags = append(tags, "cli")
-		}
-		if a.ID != "" && a.ID == activeIDE {
-			tags = append(tags, "ide")
-		}
-		if a.IsActive && len(tags) == 0 {
-			tags = append(tags, "active")
-		}
-		if db.IsTokenExpired(a.Token) {
-			tags = append(tags, "token-exp")
-		}
-		status := strings.Join(tags, ",")
+		status := strings.Join(accountStatusTags(a, activeAgy, activeIDE), ",")
 		gp, gf, cl := quotaGroups(a.Quota)
-		fmt.Printf("%-36s %-14s %10s %10s %10s\n", a.Email, status, gp, gf, cl)
+		rst := nextResetSummary(a.Quota, now)
+		fmt.Printf("%-36s %-14s %9s %9s %9s  %s\n", a.Email, status, gp, gf, cl, rst)
 	}
 	return nil
+}
+
+func accountStatusTags(a db.Account, activeAgy, activeIDE string) []string {
+	var tags []string
+	if a.ID != "" && a.ID == activeAgy {
+		tags = append(tags, "cli")
+	}
+	if a.ID != "" && a.ID == activeIDE {
+		tags = append(tags, "ide")
+	}
+	if a.IsActive && len(tags) == 0 {
+		tags = append(tags, "active")
+	}
+	if db.IsTokenExpired(a.Token) {
+		tags = append(tags, "token-exp")
+	}
+	return tags
+}
+
+func printJSON(v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(raw))
+	return nil
+}
+
+func formatDurationShort(d time.Duration) string {
+	if d <= 0 {
+		return "now"
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if h > 0 {
+		return fmt.Sprintf("in %dh %dm", h, m)
+	}
+	return fmt.Sprintf("in %dm", m)
+}
+
+func formatResetTime(raw string, now time.Time) string {
+	if raw == "" {
+		return "-"
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return raw
+	}
+	local := t.Local()
+	return fmt.Sprintf("%s (%s)", local.Format("3:04 PM"), formatDurationShort(t.Sub(now)))
+}
+
+func nextResetSummary(q *db.Quota, now time.Time) string {
+	if q == nil || len(q.Models) == 0 {
+		return "-"
+	}
+	var earliest *time.Time
+	for _, m := range q.Models {
+		if m.ResetTime == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, m.ResetTime)
+		if err != nil || !t.After(now) {
+			continue
+		}
+		if earliest == nil || t.Before(*earliest) {
+			tt := t
+			earliest = &tt
+		}
+	}
+	if earliest == nil {
+		return "-"
+	}
+	return formatDurationShort(earliest.Sub(now))
 }
 
 var listCmd = &cobra.Command{
@@ -115,15 +214,58 @@ func minPct(vals []int) string {
 }
 
 var infoCmd = &cobra.Command{
-	Use:   "info <email|alias>",
-	Short: "Detailed quotas for one account",
-	Args:  cobra.ExactArgs(1),
+	Use:               "info <email|alias>",
+	Short:             "Detailed quotas for one account",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAccountsAndAliases,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		acc, err := db.FindAccount(resolve(args[0]))
 		if err != nil {
 			return err
 		}
+		if infoJSON {
+			type modelRow struct {
+				Provider  string `json:"provider"`
+				Model     string `json:"model"`
+				Score     int    `json:"score"`
+				ResetTime string `json:"reset_time,omitempty"`
+			}
+			type infoPayload struct {
+				Email        string     `json:"email"`
+				TokenExpiry  int64      `json:"token_expiry,omitempty"`
+				TokenExpired bool       `json:"token_expired"`
+				Models       []modelRow `json:"models"`
+			}
+			out := infoPayload{
+				Email:        acc.Email,
+				TokenExpired: db.IsTokenExpired(acc.Token),
+				Models:       []modelRow{},
+			}
+			if acc.Token != nil {
+				out.TokenExpiry = acc.Token.ExpiryTimestamp
+			}
+			if acc.Quota != nil {
+				for name, m := range acc.Quota.Models {
+					out.Models = append(out.Models, modelRow{
+						Provider:  modelProvider(name),
+						Model:     strings.TrimPrefix(name, "cloudaicompanion.googleapis.com/"),
+						Score:     m.Percentage,
+						ResetTime: m.ResetTime,
+					})
+				}
+				sort.Slice(out.Models, func(i, j int) bool {
+					if out.Models[i].Score != out.Models[j].Score {
+						return out.Models[i].Score > out.Models[j].Score
+					}
+					if out.Models[i].Provider != out.Models[j].Provider {
+						return out.Models[i].Provider < out.Models[j].Provider
+					}
+					return out.Models[i].Model < out.Models[j].Model
+				})
+			}
+			return printJSON(out)
+		}
+
 		fmt.Printf("Account: %s\n", acc.Email)
 		if acc.Token != nil {
 			exp := "unknown"
@@ -141,36 +283,48 @@ var infoCmd = &cobra.Command{
 			return nil
 		}
 		fmt.Printf("\n%-12s %-48s %6s  %s\n", "PROVIDER", "MODEL", "SCORE", "RESET")
-		fmt.Println(strings.Repeat("-", 90))
+		fmt.Println(strings.Repeat("-", 96))
 		type row struct {
-			name string
-			pct  int
-			rst  string
+			provider string
+			name     string
+			pct      int
+			rst      string
 		}
 		var rows []row
 		for name, m := range acc.Quota.Models {
-			rows = append(rows, row{name, m.Percentage, m.ResetTime})
+			rows = append(rows, row{
+				provider: modelProvider(name),
+				name:     strings.TrimPrefix(name, "cloudaicompanion.googleapis.com/"),
+				pct:      m.Percentage,
+				rst:      m.ResetTime,
+			})
 		}
-		for i := 0; i < len(rows); i++ {
-			for j := i + 1; j < len(rows); j++ {
-				if rows[j].pct > rows[i].pct {
-					rows[i], rows[j] = rows[j], rows[i]
-				}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].pct != rows[j].pct {
+				return rows[i].pct > rows[j].pct
 			}
-		}
+			if rows[i].provider != rows[j].provider {
+				return rows[i].provider < rows[j].provider
+			}
+			return rows[i].name < rows[j].name
+		})
+		now := time.Now()
 		for _, r := range rows {
-			provider := "OTHER"
-			ln := strings.ToLower(r.name)
-			if strings.Contains(ln, "gemini") {
-				provider = "GOOGLE"
-			} else if strings.Contains(ln, "claude") {
-				provider = "ANTHROPIC"
-			}
-			display := strings.TrimPrefix(r.name, "cloudaicompanion.googleapis.com/")
-			fmt.Printf("%-12s %-48s %5d%%  %s\n", provider, display, r.pct, r.rst)
+			fmt.Printf("%-12s %-48s %5d%%  %s\n", r.provider, r.name, r.pct, formatResetTime(r.rst, now))
 		}
 		return nil
 	},
+}
+
+func modelProvider(name string) string {
+	ln := strings.ToLower(name)
+	if strings.Contains(ln, "gemini") {
+		return "GOOGLE"
+	}
+	if strings.Contains(ln, "claude") {
+		return "ANTHROPIC"
+	}
+	return "OTHER"
 }
 
 var statusCmd = &cobra.Command{
@@ -192,21 +346,36 @@ var statusCmd = &cobra.Command{
 			active = &accounts[0]
 		}
 		if active == nil {
+			if statusJSON {
+				return printJSON(map[string]any{"active": nil})
+			}
 			fmt.Println("No accounts. Run: agm login")
 			return nil
 		}
+		gp, gf, cl := quotaGroups(active.Quota)
+		rst := nextResetSummary(active.Quota, time.Now())
+		if statusJSON {
+			return printJSON(map[string]any{
+				"email":      active.Email,
+				"gem_pro":    gp,
+				"gem_flash":  gf,
+				"claude":     cl,
+				"next_reset": rst,
+			})
+		}
 		fmt.Printf("Active Account: %s\n", active.Email)
-		gp, _, cl := quotaGroups(active.Quota)
 		fmt.Printf("Gemini Pro: %s\n", gp)
+		fmt.Printf("Gemini Fl:  %s\n", gf)
 		fmt.Printf("Claude:     %s\n", cl)
+		fmt.Printf("Next Reset: %s\n", rst)
 		return nil
 	},
 }
 
 var switchCmd = &cobra.Command{
-	Use:   "switch <email|alias>",
-	Short: "Apply account to target product(s)",
-	Args:  cobra.ExactArgs(1),
+	Use:               "switch <email|alias>",
+	Short:             "Apply account to target product(s)",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAccountsAndAliases,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tgt, err := target.Parse(switchTarget)
@@ -277,9 +446,9 @@ func switchOne(acc *db.Account, t target.Target) error {
 }
 
 var refreshCmd = &cobra.Command{
-	Use:   "refresh <email|alias>",
-	Short: "Refresh live quotas for one account",
-	Args:  cobra.ExactArgs(1),
+	Use:               "refresh <email|alias>",
+	Short:             "Refresh live quotas for one account",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAccountsAndAliases,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		acc, err := db.FindAccount(resolve(args[0]))
@@ -454,10 +623,10 @@ var syncCmd = &cobra.Command{
 }
 
 var removeCmd = &cobra.Command{
-	Use:     "remove <email|alias>",
-	Aliases: []string{"rm"},
-	Short:   "Delete account from local DB",
-	Args:    cobra.ExactArgs(1),
+	Use:               "remove <email|alias>",
+	Aliases:           []string{"rm"},
+	Short:             "Delete account from local DB",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeAccountsAndAliases,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		acc, err := db.FindAccount(resolve(args[0]))

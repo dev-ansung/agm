@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/shyim/agm/internal/aliases"
 	"github.com/shyim/agm/internal/api"
 	"github.com/shyim/agm/internal/credstore"
@@ -14,11 +13,14 @@ import (
 	"github.com/shyim/agm/internal/paths"
 	"github.com/shyim/agm/internal/process"
 	"github.com/shyim/agm/internal/target"
+	"github.com/spf13/cobra"
 )
 
 var (
 	autoSwitchMin   int
 	autoSwitchModel string
+	autoSwitchJSON  bool
+	autoSwitchYes   bool
 	watchInterval   int
 )
 
@@ -31,6 +33,8 @@ func init() {
 	autoSwitchCmd.Flags().IntVar(&autoSwitchMin, "min", 50, "Minimum quota score percentage")
 	autoSwitchCmd.Flags().IntVar(&autoSwitchMin, "min-quota", 50, "Minimum quota score percentage")
 	autoSwitchCmd.Flags().StringVar(&autoSwitchModel, "model", "", "Filter by model name (gemini|claude)")
+	autoSwitchCmd.Flags().BoolVar(&autoSwitchJSON, "json", false, "Output JSON (implies non-interactive when combined with --yes)")
+	autoSwitchCmd.Flags().BoolVarP(&autoSwitchYes, "yes", "y", false, "Confirm switch without prompting")
 	_ = autoSwitchCmd.RegisterFlagCompletionFunc("model", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return []string{"gemini", "claude"}, cobra.ShellCompDirectiveNoFileComp
 	})
@@ -184,13 +188,32 @@ var autoSwitchCmd = &cobra.Command{
 		if best == nil {
 			return fmt.Errorf("no account found with quota >= %d%%", autoSwitchMin)
 		}
-		fmt.Printf("Best account: %s (score %d%%)\n", best.Email, bestScore)
-		fmt.Print("Switch to this account? [y/N]: ")
-		var ans string
-		_, _ = fmt.Scanln(&ans)
-		if strings.ToLower(strings.TrimSpace(ans)) != "y" {
-			fmt.Println("Cancelled.")
-			return nil
+		if autoSwitchJSON && !autoSwitchYes {
+			return printJSON(map[string]any{
+				"best_account": best.Email,
+				"score":        bestScore,
+				"switched":     false,
+			})
+		}
+		if !autoSwitchYes {
+			fmt.Printf("Best account: %s (score %d%%)\n", best.Email, bestScore)
+			fmt.Print("Switch to this account? [y/N]: ")
+			var ans string
+			_, _ = fmt.Scanln(&ans)
+			if strings.ToLower(strings.TrimSpace(ans)) != "y" {
+				fmt.Println("Cancelled.")
+				return nil
+			}
+		}
+		if autoSwitchJSON {
+			if err := switchAllToAccount(best); err != nil {
+				return err
+			}
+			return printJSON(map[string]any{
+				"best_account": best.Email,
+				"score":        bestScore,
+				"switched":     true,
+			})
 		}
 		return switchAllToAccount(best)
 	},
@@ -289,6 +312,8 @@ var doctorCmd = &cobra.Command{
 		} else {
 			checks = append(checks, check{"ide_exe", false, true, "not found"})
 		}
+
+		checks = append(checks, check{"quota_url", true, false, api.QuotaEndpoint()})
 
 		accounts, err := db.ListAccounts()
 		if err != nil {
